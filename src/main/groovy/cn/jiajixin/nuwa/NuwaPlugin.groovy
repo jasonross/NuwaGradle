@@ -28,7 +28,8 @@ class NuwaPlugin implements Plugin<Project> {
             def includePackage = extension.includePackage
             def excludeClass = extension.excludeClass
             def debugOn = extension.debugOn
-
+            def nuwa = new File(project.buildDir.absolutePath + File.separator + "intermediates" + File.separator + "nuwa")
+            def log = new File(nuwa, "log-${System.currentTimeMillis()}.txt")
             project.android.applicationVariants.each { variant ->
 
                 if (variant.name.contains("debug") && !debugOn) {
@@ -46,9 +47,13 @@ class NuwaPlugin implements Plugin<Project> {
                             def path = inputFile.absolutePath
                             if (path.endsWith("classes.jar") && !path.contains("com.android.support") && !path.contains("/android/m2repository")) {
                                 preDex.doFirst {
+                                    nuwa.mkdirs()
+                                    if (!log.exists()) {
+                                        log.createNewFile()
+                                    }
                                     def applicationName = findApplication(inputFile, manifestFile)
                                     excludeClass.add(applicationName)
-                                    processJar(inputFile,includePackage,excludeClass)
+                                    processJar(log, inputFile, includePackage, excludeClass)
                                 }
                                 preDex.doLast {
                                     restoreFile(inputFile)
@@ -57,13 +62,27 @@ class NuwaPlugin implements Plugin<Project> {
                         }
 
                         inputFiles = dex.inputs.files.files
-                        println inputFiles
                         inputFiles.each { inputFile ->
                             def path = inputFile.absolutePath
                             if (path.endsWith(".class") && !path.contains("/R\$") && !path.endsWith("/R.class")) {
-                                if (!excludeClass.contains(path) && (includePackage == null) ? true : path.startsWith(includePackage)) {
+                                if ((includePackage == null) ? true : path.startsWith(includePackage)) {
                                     dex.doFirst {
-                                        processClass(inputFile)
+                                        nuwa.mkdirs()
+                                        if (!log.exists()) {
+                                            log.createNewFile()
+                                        }
+                                        def applicationName = findApplication(inputFile, manifestFile)
+                                        excludeClass.add(applicationName)
+                                        def isExclude = false;
+                                        excludeClass.each { exclude ->
+                                            if (path.endsWith(exclude)) {
+                                                isExclude = true
+                                            }
+                                        }
+                                        if (!isExclude) {
+                                            log.append(path + "\n")
+                                            processClass(inputFile)
+                                        }
                                     }
                                     dex.doLast {
                                         restoreFile(inputFile)
@@ -79,9 +98,13 @@ class NuwaPlugin implements Plugin<Project> {
                             def path = inputFile.absolutePath
                             if (path.endsWith(".jar")) {
                                 dex.doFirst {
+                                    nuwa.mkdirs()
+                                    if (!log.exists()) {
+                                        log.createNewFile()
+                                    }
                                     def applicationName = findApplication(inputFile, manifestFile)
                                     excludeClass.add(applicationName)
-                                    processJar(inputFile,includePackage,excludeClass)
+                                    processJar(log, inputFile, includePackage, excludeClass)
                                 }
                                 dex.doLast {
                                     restoreFile(inputFile)
@@ -146,7 +169,7 @@ class NuwaPlugin implements Plugin<Project> {
         optClass.renameTo(file)
     }
 
-    def processJar(File file, String includePackage, HashSet<String> excludeClass) {
+    def processJar(File log, File file, String includePackage, HashSet<String> excludeClass) {
         if (file != null) {
             def bakJar = new File(file.getParent(), file.name + ".bak")
             def optJar = new File(file.getParent(), file.name + ".opt")
@@ -163,8 +186,10 @@ class NuwaPlugin implements Plugin<Project> {
                 InputStream inputStream = jarFile.getInputStream(jarEntry);
                 jarOutputStream.putNextEntry(zipEntry);
 
-                if (entryName.endsWith(".class") && !entryName.contains("/R\$") && !entryName.endsWith("/R.class") && !entryName.startsWith("cn/jiajixin/nuwa/") && ((includePackage == null) ? true : entryName.startsWith(includePackage))&& !excludeClass.contains(entryName)) {
-                    jarOutputStream.write(referHackWhenInit(inputStream));
+                if (entryName.endsWith(".class") && !entryName.contains("/R\$") && !entryName.endsWith("/R.class") && !entryName.startsWith("cn/jiajixin/nuwa/") && ((includePackage == null) ? true : entryName.startsWith(includePackage)) && !excludeClass.contains(entryName)) {
+                    def bytes = referHackWhenInit(inputStream);
+                    jarOutputStream.write(bytes);
+                    log.append(entryName + "\n")
                 } else {
                     jarOutputStream.write(IOUtils.toByteArray(inputStream));
                 }

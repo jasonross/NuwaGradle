@@ -5,7 +5,7 @@ plugins {
 apply plugin: 'groovy'
 
 group "cn.jiajixin.nuwa"
-version '1.1.10'
+version '1.1.12'
 
 repositories {
     jcenter()
@@ -57,7 +57,7 @@ publishing {
             artifact javadocJar
             groupId 'cn.jiajixin.nuwa'
             artifactId 'gradle'
-            version '1.1.10'
+            version '1.1.12'
         }
     }
 }
