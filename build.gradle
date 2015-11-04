@@ -1,0 +1,63 @@
+plugins {
+    id "com.jfrog.bintray" version "1.4"
+}
+
+apply plugin: 'groovy'
+
+group "cn.jiajixin.nuwa"
+version '1.1.10'
+
+repositories {
+    jcenter()
+}
+
+dependencies {
+    compile gradleApi()
+    compile "commons-io:commons-io:1.4"
+}
+
+apply plugin: 'maven-publish'
+
+// custom tasks for creating source/javadoc jars
+task sourcesJar(type: Jar, dependsOn: classes) {
+    classifier = 'sources'
+    from sourceSets.main.allSource
+}
+
+task javadocJar(type: Jar, dependsOn: javadoc) {
+    classifier = 'javadoc'
+    from javadoc.destinationDir
+}
+
+// add javadoc/source jar tasks as artifacts
+artifacts {
+    archives sourcesJar, javadocJar
+}
+bintray {
+    user = 'jasonross'
+    key = '6b8416b4ab45f0785ef1a5b6b589fa6fd66f9694'
+    publications = ['mavenJava']
+    pkg {
+        repo = 'maven'
+        name = 'nuwa-gradle'
+        desc = 'a gradle plugin for nuwa to inject some code into classes'
+        websiteUrl = 'https://github.com/jasonross/NuwaGradle'
+        issueTrackerUrl = 'https://github.com/jasonross/NuwaGradle/issues'
+        vcsUrl = 'https://github.com/jasonross/NuwaGradle'
+        publicDownloadNumbers = true
+        licenses = ['MIT']
+    }
+}
+
+publishing {
+    publications {
+        mavenJava(MavenPublication) {
+            from components.java
+            artifact sourcesJar
+            artifact javadocJar
+            groupId 'cn.jiajixin.nuwa'
+            artifactId 'gradle'
+            version '1.1.10'
+        }
+    }
+}
