@@ -18,6 +18,10 @@ import java.util.zip.ZipEntry
 
 
 class NuwaPlugin implements Plugin<Project> {
+    def includePackage
+    def excludeClass
+    def debugOn
+    def applicationName
 
     @Override
     void apply(Project project) {
@@ -25,9 +29,9 @@ class NuwaPlugin implements Plugin<Project> {
 
         project.afterEvaluate {
             def extension = project.extensions.findByName("nuwa") as NuwaExtension
-            def includePackage = extension.includePackage
-            def excludeClass = extension.excludeClass
-            def debugOn = extension.debugOn
+            includePackage = extension.includePackage
+            excludeClass = extension.excludeClass
+            debugOn = extension.debugOn
             def nuwa = new File(project.buildDir.absolutePath + File.separator + "intermediates" + File.separator + "nuwa")
             def log = new File(nuwa, "log-${System.currentTimeMillis()}.txt")
             project.android.applicationVariants.each { variant ->
@@ -51,9 +55,9 @@ class NuwaPlugin implements Plugin<Project> {
                                     if (!log.exists()) {
                                         log.createNewFile()
                                     }
-                                    def applicationName = findApplication(inputFile, manifestFile)
+                                    applicationName = findApplication(inputFile, manifestFile)
                                     excludeClass.add(applicationName)
-                                    processJar(log, inputFile, includePackage, excludeClass)
+                                    processJar(log, inputFile)
                                 }
                                 preDex.doLast {
                                     restoreFile(inputFile)
@@ -71,7 +75,7 @@ class NuwaPlugin implements Plugin<Project> {
                                         if (!log.exists()) {
                                             log.createNewFile()
                                         }
-                                        def applicationName = findApplication(inputFile, manifestFile)
+                                        applicationName = findApplication(inputFile, manifestFile)
                                         excludeClass.add(applicationName)
                                         def isExclude = false;
                                         excludeClass.each { exclude ->
@@ -102,9 +106,9 @@ class NuwaPlugin implements Plugin<Project> {
                                     if (!log.exists()) {
                                         log.createNewFile()
                                     }
-                                    def applicationName = findApplication(inputFile, manifestFile)
+                                    applicationName = findApplication(inputFile, manifestFile)
                                     excludeClass.add(applicationName)
-                                    processJar(log, inputFile, includePackage, excludeClass)
+                                    processJar(log, inputFile)
                                 }
                                 dex.doLast {
                                     restoreFile(inputFile)
@@ -169,7 +173,7 @@ class NuwaPlugin implements Plugin<Project> {
         optClass.renameTo(file)
     }
 
-    def processJar(File log, File file, String includePackage, HashSet<String> excludeClass) {
+    def processJar(File log, File file) {
         if (file != null) {
             def bakJar = new File(file.getParent(), file.name + ".bak")
             def optJar = new File(file.getParent(), file.name + ".opt")
