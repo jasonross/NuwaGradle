@@ -18,46 +18,58 @@ import java.util.zip.ZipEntry
 
 
 class NuwaPlugin implements Plugin<Project> {
-    def includePackage
-    def excludeClass
+    HashSet<String> includePackage
+    HashSet<String> excludeClass
     def debugOn
-    def applicationName
+    def log
 
     @Override
     void apply(Project project) {
         project.extensions.create("nuwa", NuwaExtension, project)
 
         project.afterEvaluate {
+
+            //get extension setting
             def extension = project.extensions.findByName("nuwa") as NuwaExtension
             includePackage = extension.includePackage
             excludeClass = extension.excludeClass
             debugOn = extension.debugOn
-            def nuwa = new File(project.buildDir.absolutePath + File.separator + "intermediates" + File.separator + "nuwa")
-            def log = new File(nuwa, "log-${System.currentTimeMillis()}.txt")
+
+            //create log file
+            def nuwa = new File(project.buildDir.absolutePath + File.separator + "outputs" + File.separator + "nuwa")
+            log = new File(nuwa, "log-${System.currentTimeMillis()}.txt")
+
+
             project.android.applicationVariants.each { variant ->
 
                 if (variant.name.contains("debug") && !debugOn) {
 
                 } else {
                     def processManifest = project.tasks.findByName("process${variant.name.capitalize()}Manifest")
-                    def manifestFile = processManifest.outputs.files.files[0]
-
+                    def compileSources = project.tasks.findByName("compile${variant.name.capitalize()}Sources")
                     def preDex = project.tasks.findByName("preDex${variant.name.capitalize()}")
                     def dex = project.tasks.findByName("dex${variant.name.capitalize()}")
+
+                    def manifestFile = processManifest.outputs.files.files[0]
+                    compileSources.doFirst {
+                        def applicationName = findApplication(manifestFile)
+                        if (applicationName != null) {
+                            excludeClass.add(applicationName)
+                        }
+                        nuwa.mkdirs()
+                        if (!log.exists()) {
+                            log.createNewFile()
+                        }
+                        log.append("\n${variant.name.capitalize()}:\n")
+                    }
 
                     if (preDex != null) {
                         Set<File> inputFiles = preDex.inputs.files.files
                         inputFiles.each { inputFile ->
                             def path = inputFile.absolutePath
-                            if (path.endsWith("classes.jar") && !path.contains("com.android.support") && !path.contains("/android/m2repository")) {
+                            if (shouldProcessPreDexJar(path)) {
                                 preDex.doFirst {
-                                    nuwa.mkdirs()
-                                    if (!log.exists()) {
-                                        log.createNewFile()
-                                    }
-                                    applicationName = findApplication(inputFile, manifestFile)
-                                    excludeClass.add(applicationName)
-                                    processJar(log, inputFile)
+                                    processJar(inputFile)
                                 }
                                 preDex.doLast {
                                     restoreFile(inputFile)
@@ -68,22 +80,11 @@ class NuwaPlugin implements Plugin<Project> {
                         inputFiles = dex.inputs.files.files
                         inputFiles.each { inputFile ->
                             def path = inputFile.absolutePath
-                            if (path.endsWith(".class") && !path.contains("/R\$") && !path.endsWith("/R.class")) {
-                                if ((includePackage == null) ? true : path.startsWith(includePackage)) {
+
+                            if (path.endsWith(".class") && !path.contains("/R\$") && !path.endsWith("/R.class") && !path.endsWith("/BuildConfig.class")) {
+                                if (isInclued(path)) {
                                     dex.doFirst {
-                                        nuwa.mkdirs()
-                                        if (!log.exists()) {
-                                            log.createNewFile()
-                                        }
-                                        applicationName = findApplication(inputFile, manifestFile)
-                                        excludeClass.add(applicationName)
-                                        def isExclude = false;
-                                        excludeClass.each { exclude ->
-                                            if (path.endsWith(exclude)) {
-                                                isExclude = true
-                                            }
-                                        }
-                                        if (!isExclude) {
+                                        if (!isExclued(path)) {
                                             log.append(path + "\n")
                                             processClass(inputFile)
                                         }
@@ -102,13 +103,7 @@ class NuwaPlugin implements Plugin<Project> {
                             def path = inputFile.absolutePath
                             if (path.endsWith(".jar")) {
                                 dex.doFirst {
-                                    nuwa.mkdirs()
-                                    if (!log.exists()) {
-                                        log.createNewFile()
-                                    }
-                                    applicationName = findApplication(inputFile, manifestFile)
-                                    excludeClass.add(applicationName)
-                                    processJar(log, inputFile)
+                                    processJar(inputFile)
                                 }
                                 dex.doLast {
                                     restoreFile(inputFile)
@@ -121,7 +116,40 @@ class NuwaPlugin implements Plugin<Project> {
         }
     }
 
-    def String findApplication(File file, File manifestFile) {
+
+    def boolean isExclued(String path) {
+        def isExcluded = false;
+        excludeClass.each { exclude ->
+            if (path.endsWith(exclude)) {
+                isExcluded = true
+            }
+        }
+        return isExcluded
+    }
+
+    def boolean isInclued(String path) {
+        if (includePackage.size() == 0) {
+            return true
+        }
+
+        def isInclued = false;
+        includePackage.each { include ->
+            if (path.contains(include)) {
+                isInclued = true
+            }
+        }
+        return isInclued
+    }
+
+    def boolean shouldProcessPreDexJar(String path) {
+        return path.endsWith("classes.jar") && !path.contains("com.android.support") && !path.contains("/android/m2repository");
+    }
+
+    def boolean shouldProcessClassInJar(String entryName) {
+        return entryName.endsWith(".class") && !entryName.startsWith("cn/jiajixin/nuwa/") && isInclued(entryName) && !excludeClass.contains(entryName) && !entryName.contains("android/support/")
+    }
+
+    def String findApplication(File manifestFile) {
         def manifest = new XmlParser().parse(manifestFile)
         def androidtag = new groovy.xml.Namespace("http://schemas.android.com/apk/res/android", 'android')
         def applicationName = manifest.application[0].attribute(androidtag.name)
@@ -173,7 +201,7 @@ class NuwaPlugin implements Plugin<Project> {
         optClass.renameTo(file)
     }
 
-    def processJar(File log, File file) {
+    def processJar(File file) {
         if (file != null) {
             def bakJar = new File(file.getParent(), file.name + ".bak")
             def optJar = new File(file.getParent(), file.name + ".opt")
@@ -190,7 +218,7 @@ class NuwaPlugin implements Plugin<Project> {
                 InputStream inputStream = jarFile.getInputStream(jarEntry);
                 jarOutputStream.putNextEntry(zipEntry);
 
-                if (entryName.endsWith(".class") && !entryName.contains("/R\$") && !entryName.endsWith("/R.class") && !entryName.startsWith("cn/jiajixin/nuwa/") && ((includePackage == null) ? true : entryName.startsWith(includePackage)) && !excludeClass.contains(entryName)) {
+                if (shouldProcessClassInJar(entryName)) {
                     def bytes = referHackWhenInit(inputStream);
                     jarOutputStream.write(bytes);
                     log.append(entryName + "\n")
