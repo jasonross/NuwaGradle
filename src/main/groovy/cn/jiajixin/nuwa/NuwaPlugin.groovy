@@ -29,6 +29,7 @@ class NuwaPlugin implements Plugin<Project> {
 
         project.afterEvaluate {
 
+            println "afterEvaluate start"
             //get extension setting
             def extension = project.extensions.findByName("nuwa") as NuwaExtension
             includePackage = extension.includePackage
@@ -41,6 +42,8 @@ class NuwaPlugin implements Plugin<Project> {
 
 
             project.android.applicationVariants.each { variant ->
+
+                println variant.name
 
                 if (variant.name.contains("debug") && !debugOn) {
 
@@ -61,33 +64,49 @@ class NuwaPlugin implements Plugin<Project> {
                             log.createNewFile()
                         }
                         log.append("\n${variant.name.capitalize()}:\n")
-                    }
 
-                    if (preDex != null) {
-                        Set<File> inputFiles = preDex.inputs.files.files
-                        inputFiles.each { inputFile ->
-                            def path = inputFile.absolutePath
-                            if (shouldProcessPreDexJar(path)) {
-                                preDex.doFirst {
-                                    processJar(inputFile)
-                                }
-                                preDex.doLast {
-                                    restoreFile(inputFile)
+                        if (preDex != null) {
+                            Set<File> inputFiles = preDex.inputs.files.files
+                            println "predex" + inputFiles
+
+                            inputFiles.each { inputFile ->
+                                def path = inputFile.absolutePath
+                                if (shouldProcessPreDexJar(path)) {
+                                    preDex.doFirst {
+                                        processJar(inputFile)
+                                    }
+                                    preDex.doLast {
+                                        restoreFile(inputFile)
+                                    }
                                 }
                             }
-                        }
 
-                        inputFiles = dex.inputs.files.files
-                        inputFiles.each { inputFile ->
-                            def path = inputFile.absolutePath
+                            inputFiles = dex.inputs.files.files
+                            println "inputFiles" + inputFiles
 
-                            if (path.endsWith(".class") && !path.contains("/R\$") && !path.endsWith("/R.class") && !path.endsWith("/BuildConfig.class")) {
-                                if (isInclued(path)) {
-                                    dex.doFirst {
-                                        if (!isExclued(path)) {
-                                            log.append(path + "\n")
-                                            processClass(inputFile)
+                            inputFiles.each { inputFile ->
+                                def path = inputFile.absolutePath
+                                if (path.endsWith(".class") && !path.contains("/R\$") && !path.endsWith("/R.class") && !path.endsWith("/BuildConfig.class")) {
+                                    if (isInclued(path)) {
+                                        dex.doFirst {
+                                            if (!isExclued(path)) {
+                                                log.append(path + "\n")
+                                                processClass(inputFile)
+                                            }
                                         }
+                                        dex.doLast {
+                                            restoreFile(inputFile)
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            Set<File> inputFiles = dex.inputs.files.files
+                            inputFiles.each { inputFile ->
+                                def path = inputFile.absolutePath
+                                if (path.endsWith(".jar")) {
+                                    dex.doFirst {
+                                        processJar(inputFile)
                                     }
                                     dex.doLast {
                                         restoreFile(inputFile)
@@ -95,22 +114,9 @@ class NuwaPlugin implements Plugin<Project> {
                                 }
                             }
                         }
-
-
-                    } else {
-                        Set<File> inputFiles = dex.inputs.files.files
-                        inputFiles.each { inputFile ->
-                            def path = inputFile.absolutePath
-                            if (path.endsWith(".jar")) {
-                                dex.doFirst {
-                                    processJar(inputFile)
-                                }
-                                dex.doLast {
-                                    restoreFile(inputFile)
-                                }
-                            }
-                        }
                     }
+
+
                 }
             }
         }
