@@ -1,7 +1,10 @@
 package cn.jiajixin.nuwa
 
+import org.apache.commons.codec.digest.DigestUtils
+import org.apache.commons.io.FileUtils
 import org.apache.commons.io.IOUtils
-
+import org.apache.tools.ant.taskdefs.condition.Os
+import org.gradle.api.InvalidUserDataException
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.objectweb.asm.ClassReader
@@ -21,7 +24,8 @@ class NuwaPlugin implements Plugin<Project> {
     HashSet<String> includePackage
     HashSet<String> excludeClass
     def debugOn
-    def log
+    def patchList = []
+    private static final String HASH_SEPARATOR = ":"
 
     @Override
     void apply(Project project) {
@@ -29,101 +33,212 @@ class NuwaPlugin implements Plugin<Project> {
 
         project.afterEvaluate {
 
-            println "afterEvaluate start"
             //get extension setting
             def extension = project.extensions.findByName("nuwa") as NuwaExtension
             includePackage = extension.includePackage
             excludeClass = extension.excludeClass
             debugOn = extension.debugOn
 
-            //create log file
-            def nuwa = new File(project.buildDir.absolutePath + File.separator + "outputs" + File.separator + "nuwa")
-            log = new File(nuwa, "log-${System.currentTimeMillis()}.txt")
+            //if old nuwa dir valid
+            def oldNuwaDir
+            if (project.hasProperty('NuwaDir')) {
+                oldNuwaDir = new File(project.NuwaDir)
+                if (!oldNuwaDir.exists()) {
+                    throw new InvalidUserDataException("${project.NuwaDir} does not exist")
+                }
+                if (!oldNuwaDir.isDirectory()) {
+                    throw new InvalidUserDataException("${project.NuwaDir} is not directory")
+                }
+            }
+
+            //generate patches
+            def generatePatches = "generatePatches"
+            project.task(generatePatches) << {
+                def sdkDir = System.getenv("ANDROID_HOME")
+                if (sdkDir) {
+                    def cmdExt = Os.isFamily(Os.FAMILY_WINDOWS) ? '.bat' : ''
+                    patchList.each { patchDir ->
+                        project.exec {
+                            commandLine "${sdkDir}/build-tools/${project.android.buildToolsVersion}/dx${cmdExt}",
+                                    '--dex',
+                                    "--output=${new File(patchDir.getParent(), "patch.jar")}",
+                                    "${patchDir}"
+                        }
+                    }
+                } else {
+                    throw new InvalidUserDataException('$ANDROID_HOME is not defined')
+                }
+            }
+            project.tasks[generatePatches].dependsOn project.tasks["assemble"]
 
 
             project.android.applicationVariants.each { variant ->
 
-                println variant.name
-
                 if (variant.name.contains("debug") && !debugOn) {
 
                 } else {
-                    def processManifest = project.tasks.findByName("process${variant.name.capitalize()}Manifest")
-                    def compileSources = project.tasks.findByName("compile${variant.name.capitalize()}Sources")
-                    def preDex = project.tasks.findByName("preDex${variant.name.capitalize()}")
-                    def dex = project.tasks.findByName("dex${variant.name.capitalize()}")
+                    def processManifestTask = project.tasks.findByName("process${variant.name.capitalize()}Manifest")
+                    def compileJavaTask = project.tasks.findByName("compile${variant.name.capitalize()}Java")
+                    def preDexTask = project.tasks.findByName("preDex${variant.name.capitalize()}")
+                    def dexTask = project.tasks.findByName("dex${variant.name.capitalize()}")
+                    def proguardTask = project.tasks.findByName("proguard${variant.name.capitalize()}")
+                    def patchTask = "generate${variant.name.capitalize()}Patch"
 
-                    def manifestFile = processManifest.outputs.files.files[0]
-                    compileSources.doFirst {
+                    def manifestFile = processManifestTask.outputs.files.files[0]
+
+                    // proguard -applymapping
+                    if (oldNuwaDir) {
+                        if (proguardTask) {
+                            def oldMapFile = new File("${oldNuwaDir}/${variant.dirName}/mapping.txt");
+                            if (oldMapFile.exists()) {
+                                proguardTask.applymapping(oldMapFile)
+                            } else {
+                                throw new InvalidUserDataException("$oldMapFile does not exist")
+                            }
+                        }
+                    }
+
+                    //parse hash.txt to map
+                    def hashMap
+                    if (oldNuwaDir) {
+                        def oldHashFile = new File("${oldNuwaDir}/${variant.dirName}/hash.txt");
+                        if (oldHashFile.exists()) {
+                            hashMap = [:]
+                            oldHashFile.eachLine {
+                                def list = it.split(HASH_SEPARATOR)
+                                if (list.size() == 2) {
+                                    hashMap.put(list[0], list[1])
+                                }
+                            }
+                        } else {
+                            throw new InvalidUserDataException("$oldHashFile does not exist")
+                        }
+                    }
+
+                    def nuwaDir
+                    def patchDir
+
+                    compileJavaTask.doFirst {
+                        // exclude application
                         def applicationName = findApplication(manifestFile)
                         if (applicationName != null) {
                             excludeClass.add(applicationName)
                         }
-                        nuwa.mkdirs()
-                        if (!log.exists()) {
-                            log.createNewFile()
+
+                        // create hash file
+                        nuwaDir = new File("${project.buildDir}/outputs/nuwa")
+                        def outputDir = new File("${nuwaDir}/${variant.dirName}")
+                        outputDir.mkdirs()
+                        def hashFile = new File(outputDir, "hash.txt")
+                        if (!hashFile.exists()) {
+                            hashFile.createNewFile()
                         }
-                        log.append("\n${variant.name.capitalize()}:\n")
 
-                        if (preDex != null) {
-                            Set<File> inputFiles = preDex.inputs.files.files
-                            println "predex" + inputFiles
+                        //mkdir patch
+                        if (oldNuwaDir) {
+                            patchDir = new File("${nuwaDir}/${variant.dirName}/patch")
+                            patchDir.mkdirs()
+                            patchList.add(patchDir)
+                        }
 
+
+                        if (preDexTask) {
+                            //predex jar
+                            Set<File> inputFiles = preDexTask.inputs.files.files
                             inputFiles.each { inputFile ->
                                 def path = inputFile.absolutePath
                                 if (shouldProcessPreDexJar(path)) {
-                                    preDex.doFirst {
-                                        processJar(inputFile)
+                                    preDexTask.doFirst {
+                                        processJar(hashFile, inputFile, patchDir, hashMap)
                                     }
-                                    preDex.doLast {
+                                    preDexTask.doLast {
                                         restoreFile(inputFile)
                                     }
                                 }
                             }
 
-                            inputFiles = dex.inputs.files.files
-                            println "inputFiles" + inputFiles
-
+                            //dex classes
+                            inputFiles = dexTask.inputs.files.files
+                            println inputFiles
                             inputFiles.each { inputFile ->
                                 def path = inputFile.absolutePath
+                                println path
                                 if (path.endsWith(".class") && !path.contains("/R\$") && !path.endsWith("/R.class") && !path.endsWith("/BuildConfig.class")) {
-                                    if (isInclued(path)) {
-                                        dex.doFirst {
-                                            if (!isExclued(path)) {
-                                                log.append(path + "\n")
-                                                processClass(inputFile)
+                                    if (isIncluded(path)) {
+                                        dexTask.doFirst {
+                                            if (!isExcluded(path)) {
+                                                def bytes = processClass(inputFile)
+
+                                                path = path.split("${variant.dirName}/")[1]
+                                                def hash = DigestUtils.shaHex(bytes)
+                                                hashFile.append(path + HASH_SEPARATOR + hash + "\n")
+
+                                                if (hashMap) {
+                                                    copyToNuwaPatch(path, hash, hashMap, inputFile.bytes, touchFile(patchDir, path))
+                                                }
                                             }
                                         }
-                                        dex.doLast {
+                                        dexTask.doLast {
                                             restoreFile(inputFile)
                                         }
                                     }
                                 }
                             }
                         } else {
-                            Set<File> inputFiles = dex.inputs.files.files
+                            //dex jar
+                            Set<File> inputFiles = dexTask.inputs.files.files
                             inputFiles.each { inputFile ->
                                 def path = inputFile.absolutePath
                                 if (path.endsWith(".jar")) {
-                                    dex.doFirst {
-                                        processJar(inputFile)
+                                    dexTask.doFirst {
+                                        processJar(hashFile, inputFile, patchDir, hashMap)
                                     }
-                                    dex.doLast {
+                                    dexTask.doLast {
                                         restoreFile(inputFile)
                                     }
                                 }
                             }
                         }
+
+
                     }
 
+                    //copy mapping.txt to nuva dir
+                    dexTask.doFirst {
+                        if (proguardTask) {
+                            def mapFile = new File("${project.buildDir}/outputs/mapping/${variant.dirName}/mapping.txt")
+                            def newMapFile = new File("${nuwaDir}/${variant.dirName}/mapping.txt");
+                            FileUtils.copyFile(mapFile, newMapFile)
+                        }
+                    }
 
+                    //generate patch
+                    project.task(patchTask) << {
+                        if (patchDir) {
+                            def sdkDir = System.getenv("ANDROID_HOME")
+                            if (sdkDir) {
+                                def cmdExt = Os.isFamily(Os.FAMILY_WINDOWS) ? '.bat' : ''
+                                def stdout = new ByteArrayOutputStream()
+                                project.exec {
+                                    commandLine "${sdkDir}/build-tools/${project.android.buildToolsVersion}/dx${cmdExt}",
+                                            '--dex',
+                                            "--output=${new File(patchDir.getParent(), "patch.jar")}",
+                                            "${patchDir}"
+                                    standardOutput = stdout
+                                }
+                            } else {
+                                throw new InvalidUserDataException('$ANDROID_HOME is not defined')
+                            }
+                        }
+                    }
+                    project.tasks[patchTask].dependsOn dexTask
                 }
             }
         }
     }
 
-
-    def boolean isExclued(String path) {
+    //is file excluded
+    def boolean isExcluded(String path) {
         def isExcluded = false;
         excludeClass.each { exclude ->
             if (path.endsWith(exclude)) {
@@ -133,28 +248,32 @@ class NuwaPlugin implements Plugin<Project> {
         return isExcluded
     }
 
-    def boolean isInclued(String path) {
+    //is file included
+    def boolean isIncluded(String path) {
         if (includePackage.size() == 0) {
             return true
         }
 
-        def isInclued = false;
+        def isIncluded = false;
         includePackage.each { include ->
             if (path.contains(include)) {
-                isInclued = true
+                isIncluded = true
             }
         }
-        return isInclued
+        return isIncluded
     }
 
+    //should process predex jar
     def boolean shouldProcessPreDexJar(String path) {
         return path.endsWith("classes.jar") && !path.contains("com.android.support") && !path.contains("/android/m2repository");
     }
 
+    //should process class in jar
     def boolean shouldProcessClassInJar(String entryName) {
-        return entryName.endsWith(".class") && !entryName.startsWith("cn/jiajixin/nuwa/") && isInclued(entryName) && !excludeClass.contains(entryName) && !entryName.contains("android/support/")
+        return entryName.endsWith(".class") && !entryName.startsWith("cn/jiajixin/nuwa/") && isIncluded(entryName) && !excludeClass.contains(entryName) && !entryName.contains("android/support/")
     }
 
+    //find application name
     def String findApplication(File manifestFile) {
         def manifest = new XmlParser().parse(manifestFile)
         def androidtag = new groovy.xml.Namespace("http://schemas.android.com/apk/res/android", 'android')
@@ -166,7 +285,7 @@ class NuwaPlugin implements Plugin<Project> {
         return null;
     }
 
-
+    //refer hack class when object init
     byte[] referHackWhenInit(InputStream inputStream) {
         ClassReader cr = new ClassReader(inputStream);
         ClassWriter cw = new ClassWriter(cr, 0);
@@ -193,27 +312,31 @@ class NuwaPlugin implements Plugin<Project> {
         return cw.toByteArray();
     }
 
-    def processClass(File file) {
+    //process class
+    def byte[] processClass(File file) {
         def bakClass = new File(file.getParent(), file.name + ".bak")
         def optClass = new File(file.getParent(), file.name + ".opt")
 
         FileInputStream inputStream = new FileInputStream(file);
         FileOutputStream outputStream = new FileOutputStream(optClass)
 
-        outputStream.write(referHackWhenInit(inputStream))
+        def bytes = referHackWhenInit(inputStream);
+        outputStream.write(bytes)
         inputStream.close()
         outputStream.close()
         file.renameTo(bakClass)
         optClass.renameTo(file)
+        return bytes
     }
 
-    def processJar(File file) {
-        if (file != null) {
-            def bakJar = new File(file.getParent(), file.name + ".bak")
-            def optJar = new File(file.getParent(), file.name + ".opt")
+    //process jar
+    def processJar(File hashFile, File jarFile, File patchDir, Map map) {
+        if (jarFile) {
+            def bakJar = new File(jarFile.getParent(), jarFile.name + ".bak")
+            def optJar = new File(jarFile.getParent(), jarFile.name + ".opt")
 
-            def jarFile = new JarFile(file);
-            Enumeration enumeration = jarFile.entries();
+            def file = new JarFile(jarFile);
+            Enumeration enumeration = file.entries();
             JarOutputStream jarOutputStream = new JarOutputStream(new FileOutputStream(optJar));
 
             while (enumeration.hasMoreElements()) {
@@ -221,34 +344,68 @@ class NuwaPlugin implements Plugin<Project> {
                 String entryName = jarEntry.getName();
                 ZipEntry zipEntry = new ZipEntry(entryName);
 
-                InputStream inputStream = jarFile.getInputStream(jarEntry);
+                InputStream inputStream = file.getInputStream(jarEntry);
                 jarOutputStream.putNextEntry(zipEntry);
 
                 if (shouldProcessClassInJar(entryName)) {
                     def bytes = referHackWhenInit(inputStream);
                     jarOutputStream.write(bytes);
-                    log.append(entryName + "\n")
+
+                    def hash = DigestUtils.shaHex(bytes)
+                    hashFile.append(entryName + HASH_SEPARATOR + hash + "\n")
+
+                    if (map) {
+                        copyToNuwaPatch(entryName, hash, map, bytes, touchFile(patchDir, entryName))
+                    }
                 } else {
                     jarOutputStream.write(IOUtils.toByteArray(inputStream));
                 }
                 jarOutputStream.closeEntry();
             }
             jarOutputStream.close();
-            jarFile.close();
+            file.close();
 
-            file.renameTo(bakJar)
-            optJar.renameTo(file)
+            jarFile.renameTo(bakJar)
+            optJar.renameTo(jarFile)
         }
 
     }
 
-
+    //restore file
     def restoreFile(File file) {
         def bakJar = new File(file.getParent(), file.name + ".bak")
         if (bakJar.exists()) {
             file.delete()
             bakJar.renameTo(file)
         }
+    }
+
+    //copy class to nuwa path
+    def copyToNuwaPatch(String name, String hash, Map map, byte[] bytes, File file) {
+        if (map) {
+            def value = map.get(name)
+
+            def write = false
+            if (value) {
+                if (!value.equals(hash)) {
+                    write = true
+                }
+            } else {
+                write = true
+            }
+            if (write) {
+                if (!file.exists()) {
+                    file.createNewFile()
+                }
+                FileUtils.writeByteArrayToFile(file, bytes)
+            }
+        }
+    }
+
+    def File touchFile(File dir, String path) {
+        def file = new File("${dir}/${path}")
+        file.getParentFile().mkdirs()
+        return file
     }
 
 }
