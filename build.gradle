@@ -4,7 +4,7 @@ plugins {
 
 apply plugin: 'groovy'
 
-def versionName = "1.1.66"
+def versionName = "1.2.1"
 group "cn.jiajixin.nuwa"
 version versionName
 
@@ -16,7 +16,6 @@ dependencies {
     compile gradleApi()
     compile "commons-io:commons-io:1.4"
     compile 'commons-codec:commons-codec:1.6'
-
 }
 
 apply plugin: 'maven-publish'
