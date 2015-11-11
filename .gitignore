@@ -3,5 +3,5 @@
 .gradle
 build
 classes
-local.properties
+*.properties
 .DS_Store

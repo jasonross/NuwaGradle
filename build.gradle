@@ -37,7 +37,7 @@ artifacts {
 }
 bintray {
     user = 'jasonross'
-    key = '6b8416b4ab45f0785ef1a5b6b589fa6fd66f9694'
+    key = KEY
     publications = ['mavenJava']
     pkg {
         repo = 'maven'
