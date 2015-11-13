@@ -27,10 +27,10 @@ class NuwaFileUtils {
         if (project.hasProperty(property)) {
             file = new File(project.getProperties()[property])
             if (!file.exists()) {
-                throw new InvalidUserDataException("${project.property} does not exist")
+                throw new InvalidUserDataException("${project.getProperties()[property]} does not exist")
             }
             if (!file.isDirectory()) {
-                throw new InvalidUserDataException("${project.property} is not directory")
+                throw new InvalidUserDataException("${project.getProperties()[property]} is not directory")
             }
         }
         return file
