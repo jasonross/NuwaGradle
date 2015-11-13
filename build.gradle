@@ -4,7 +4,7 @@ plugins {
 
 apply plugin: 'groovy'
 
-def versionName = "1.2.1"
+def versionName = "1.2.2"
 group "cn.jiajixin.nuwa"
 version versionName
 
@@ -37,7 +37,9 @@ artifacts {
 }
 bintray {
     user = 'jasonross'
-    key = KEY
+    if (project.hasProperty("KEY")) {
+        key = KEY
+    }
     publications = ['mavenJava']
     pkg {
         repo = 'maven'
