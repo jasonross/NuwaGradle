@@ -25,7 +25,16 @@ class NuwaAndroidUtils {
 
     public static dex(Project project, File classDir) {
         if (classDir.listFiles().size()) {
-            def sdkDir = System.getenv("ANDROID_HOME")
+            def sdkDir
+38  
+39          Properties properties = new Properties()
+40          File localProps = project.rootProject.file("local.properties")
+41          if (localProps.exists()) {
+42              properties.load(localProps.newDataInputStream())
+43              sdkDir = properties.getProperty("sdk.dir")
+44          } else {
+45              sdkDir = System.getenv("ANDROID_HOME")
+46          }
             if (sdkDir) {
                 def cmdExt = Os.isFamily(Os.FAMILY_WINDOWS) ? '.bat' : ''
                 def stdout = new ByteArrayOutputStream()
