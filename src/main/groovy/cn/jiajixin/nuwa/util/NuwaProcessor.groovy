@@ -66,13 +66,15 @@ class NuwaProcessor {
                                              String signature, String[] exceptions) {
 
                 MethodVisitor mv = super.visitMethod(access, name, desc, signature, exceptions);
-                mv = new MethodVisitor(Opcodes.ASM4, mv) {
-                    @Override
-                    void visitInsn(int opcode) {
-                        if ("<init>".equals(name) && opcode == Opcodes.RETURN) {
-                            super.visitLdcInsn(Type.getType("Lcn/jiajixin/nuwa/Hack;"));
+                if ("<init>".equals(name)){
+                    mv = new MethodVisitor(Opcodes.ASM4, mv) {
+                        @Override
+                        void visitInsn(int opcode) {
+                            if (opcode == Opcodes.RETURN) {
+                                super.visitLdcInsn(Type.getType("Lcn/jiajixin/nuwa/Hack;"));
+                            }
+                            super.visitInsn(opcode);
                         }
-                        super.visitInsn(opcode);
                     }
                 }
                 return mv;
