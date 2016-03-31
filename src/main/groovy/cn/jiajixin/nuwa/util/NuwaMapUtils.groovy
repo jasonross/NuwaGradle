@@ -14,7 +14,7 @@ class NuwaMapUtils {
                     notSame = true
                 }
             } else {
-                notSame = true
+                notSame = false
             }
         }
         return notSame
