@@ -5,26 +5,24 @@ package cn.jiajixin.nuwa.util
  */
 class NuwaSetUtils {
     public static boolean isExcluded(String path, Set<String> excludeClass) {
-        def isExcluded = false;
         excludeClass.each { exclude ->
             if (path.endsWith(exclude)) {
-                isExcluded = true
+                return true
             }
         }
-        return isExcluded
+        return false
     }
 
     public static boolean isIncluded(String path, Set<String> includePackage) {
         if (includePackage.size() == 0) {
-            return true
+            return false
         }
 
-        def isIncluded = false;
         includePackage.each { include ->
             if (path.contains(include)) {
-                isIncluded = true
+                return true
             }
         }
-        return isIncluded
+        return false
     }
 }
